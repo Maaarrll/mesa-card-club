@@ -154,6 +154,7 @@ const updateTimers = () => {
 function syncSelection() {
   document.querySelectorAll('.hand .card').forEach(e => e.classList.toggle('sel', sel.has(e.dataset.card)));
   document.querySelectorAll('.meld').forEach(e => e.classList.toggle('sel', +e.dataset.i === selMeld));
+  updateSelUI();
 }
 
 // ---------- sound (synthesized with Web Audio, no files) ----------
@@ -299,6 +300,7 @@ function render() {
 
 function showAuth() {
   screen = 'auth';
+  document.body.classList.remove('in-room');
   const reg = authMode === 'register';
   $('#app').innerHTML = `<div class="auth panel">
     <div class="logo">Mesa Card Club</div>
@@ -326,9 +328,9 @@ const topbar = inner => `<header class="top"><div class="logo sm">♠♥<span cl
 // One tab per game. Coins needed to sit mirror the server's minChips (display only; the server enforces it).
 const GAME_INFO = {
   tongits: {
-    icon: '🃏', players: '3 players', need: 4,
+    icon: '🃏', players: '2-3 players', need: 4,
     note: b => `Each loser pays the winner ${b}. Tongits or burned pays double (${b * 2}).`,
-    rules: `<p>52 cards, 3 players. Dealer gets 13 cards, others 12. Card points: A=1, 2-10 face value, J/Q/K=10.</p>
+    rules: `<p>52 cards, 2 or 3 players. Dealer gets 13 cards, others 12. Card points: A=1, 2-10 face value, J/Q/K=10.</p>
       <p><b>Your turn:</b> draw from the stock, <i>or</i> take the top discard (only if it makes a meld right away). Lay down melds (3-4 of a kind, or 3+ in a row of one suit), <b>sapaw</b> (add cards to any meld on the table), then discard one card.</p>
       <p><b>Tongits:</b> empty your hand and win double. <b>Draw:</b> at the start of your turn, if you have a meld down and nobody sapaw-ed it since your last turn, call Draw. Others with a meld may fight or fold; lowest points wins (ties go to the challenger).</p>
       <p><b>Stock runs out:</b> lowest points among players with a meld wins. Players with no meld are <b>burned</b> and pay double.</p>`,
@@ -357,6 +359,7 @@ const createLabel = () => `Create ${GAME_NAMES[pickGame]} table${GAME_INFO[pickG
 
 function showLobby() {
   screen = 'lobby';
+  document.body.classList.remove('in-room');
   document.body.classList.remove('chat-open');
   const g = GAME_INFO[pickGame], name = GAME_NAMES[pickGame];
   $('#app').innerHTML = topbar('') + `<main class="lobby" data-g="${pickGame}">
@@ -370,7 +373,7 @@ function showLobby() {
         `<button class="betchip b${b} ${b === pickBet ? 'on' : ''}" role="radio" aria-checked="${b === pickBet}" data-do="bet" data-b="${b}">${b}</button>`).join('')}</div>`}
       <p class="muted" id="betnote">${betNote()}</p>
       <button class="primary big" id="createBtn" data-do="create">${createLabel()}</button>
-      <p class="muted solo">Empty seats are filled with bots, so you can also play solo.</p>
+      <p class="muted solo">Want to play solo? Create the table, then press Add bot.</p>
       <h3>Join a friend</h3>
       <div class="row"><input id="code" class="grow" maxlength="4" placeholder="Table code" autocapitalize="characters" aria-label="Table code"><button data-do="join">Join</button></div>
     </section>
@@ -423,6 +426,7 @@ function showRoomShell() {
       <form id="chatForm" class="row"><input name="text" maxlength="200" placeholder="Say something…" autocomplete="off"><button>Send</button></form>
     </aside></main>`;
   $('.top').classList.add('inroom');
+  document.body.classList.add('in-room');
   fitTopbar();
 }
 // The table fills the screen below the top bar; the bar can wrap to 2 lines, so measure it.
@@ -449,6 +453,7 @@ function fillRoom() {
     lastHtml = html;
     animateBoard(board, before);
     updateTimers();
+    updateSelUI();
   }
 
   // Float new emoji reactions from the sender's seat (not the backlog on first load).
@@ -462,9 +467,13 @@ function fillRoom() {
   if (sig && lastSig !== null && sig !== lastSig) { // lastSig null = just sat down: don't replay an old result
     if (sig === 'f') { sfx.draw(); flash('Draw called!'); }
     else {
-      const d = v.result.deltas[R.mySeat] || 0;
+      const d = v.result.deltas[R.mySeat] || 0, how = v.result.how, w = v.result.winner;
       setTimeout(d > 0 ? sfx.win : d < 0 ? sfx.lose : sfx.select, 300);
-      flash(d > 0 ? `You win +${d}` : d < 0 ? `You lose ${d}` : 'Push', d > 0 ? 'win' : d < 0 ? 'lose' : '');
+      const name = w != null && R.seats[w] ? R.seats[w].name : '';
+      flash(how === 'tongits' ? (w === R.mySeat ? `TONGITS! +${d}` : `${name}: TONGITS! ${d}`)
+        : how === 'draw' ? (d > 0 ? `You win the Draw +${d}` : `${name} wins the Draw ${d}`)
+        : d > 0 ? `You win +${d}` : d < 0 ? `You lose ${d}` : 'Push',
+        how === 'tongits' ? 'tongits' : d > 0 ? 'win' : d < 0 ? 'lose' : '');
     }
   }
   lastSig = sig;
@@ -474,7 +483,8 @@ function fillRoom() {
   wasMyTurn = myTurn;
 }
 let wasMyTurn = false;
-let meldSort = pref('meldsort', '0') === '1'; // hand grouped by melds (on) or plain rank order (off)
+let meldSort = pref('meldsort', '0') === '1';
+let showHints = pref('hints', '1') === '1'; // hint lights on unless turned off // hand grouped by melds (on) or plain rank order (off)
 
 // ---------- The table: a round felt with everyone seated in a circle around it ----------
 // Where seat i sits on the rim. You are always at the bottom; the others go round the table.
@@ -494,7 +504,13 @@ const posAt = (a, rx, ry) => `left:${Math.min(89, Math.max(11, 50 + rx * Math.co
 const seatAt = (i, n, layout) => posAt(seatAngle(i, n, layout), 45, 37);
 // A player's cards / bet / score lie on the felt in front of them, between their seat and the middle.
 // Blackjack's players sit along the bottom, so their cards spread wider and flatter to avoid touching.
-const frontAt = (i, n, layout) => posAt(seatAngle(i, n, layout), ...(layout === 'arc' ? [33, 16] : [29, 22]));
+// On a phone held sideways the table is flat, so cards sit closer to the middle (away from the seats).
+const flatTable = matchMedia('(orientation: landscape) and (max-height: 500px)');
+flatTable.addEventListener?.('change', () => { lastHtml = ''; if (R) render(); }); // re-place cards when the phone is rotated
+// Heads-up Tongits: the opponent sits across the table, so their melds go to a drop area on the left side
+// (like the original game) instead of covering the stock and discard pile in the middle.
+const frontAt = (i, n, layout) => layout === 'tg2' && i !== R.mySeat ? posAt(Math.PI * 196 / 180, 30, 20) : posAt(seatAngle(i, n, layout),
+  ...(layout === 'arc' ? (flatTable.matches ? [36, 11] : [33, 16]) : (flatTable.matches ? [33, 18] : [29, 22])));
 const face = s => (s.bot ? '🤖' : s.avatar || esc((s.name[0] || '?').toUpperCase()));
 const avatar = i => `<div class="avatar ${R.seats[i].avatar || R.seats[i].bot ? 'emoji' : ''}" style="--h:${(i * 137 + 20) % 360}">${face(R.seats[i])}</div>`;
 // One player's spot at the table: avatar, name plate with coins, then game-specific bits (cards, score, bet).
@@ -521,10 +537,10 @@ function waiting() {
   return tableHtml(seats + (R.game === 'blackjack' ? dealerSeat('') : ''), center) + `<div class="mine waitbar trayrow">
     ${betPicker('Bet:')}
     ${R.isHost ? `<div class="actions">
-      <button class="primary" data-do="start">Start game</button>
+      <button class="primary" data-do="start" ${R.seats.length < R.min ? "disabled" : ""}>Start game</button>
       ${R.seats.length < R.max ? '<button data-do="addbot">Add bot</button>' : ''}
       ${bots ? '<button data-do="removebot">Remove bot</button>' : ''}</div>
-      ${R.seats.length < R.min ? '<p class="muted">Empty seats get bots when you start.</p>' : ''}`
+      ${R.seats.length < R.min ? `<p class="muted">Need at least ${R.min} players: share the code or add a bot.</p>` : ''}`
       : '<p class="muted">Waiting for the host to start…</p>'}</div>`;
 }
 
@@ -567,21 +583,42 @@ function tongits(v) {
   const deciding = v.phase === 'fight' && !v.result ? v.fight.pending[0] : null;
   const active = i => !v.result && (deciding ?? v.turn) === i;
   const from = i => '#seat' + i;
+  const myPlay = !v.result && deciding == null && v.turn === my && v.phase === 'play';
+  const myDraw = !v.result && deciding == null && v.turn === my && v.phase === 'draw';
   sel = new Set([...sel].filter(c => v.hand.includes(c)));
   if (selMeld != null && !v.melds[selMeld]) selMeld = null;
+  // Signals (like Tongits Offline): ★ + a coloured bar per meld group, blue = sapaw (and its target meld),
+  // orange 🔥 = card to dump, green pile = take the discard, green ▼ = the recommended button.
+  const H = showHints && v.hints, glow = {}, style = {}, targets = new Set();
+  const GROUP = ['#b06bff', '#ffa53d', '#3dc6ff', '#5be37f'];
+  (H?.melds || []).forEach((m, g) => m.forEach(c => { glow[c] = 'hint-meld'; style[c] = '--gc:' + GROUP[g % GROUP.length]; }));
+  (H?.pick || []).forEach(c => { glow[c] = 'hint-meld'; style[c] = '--gc:' + GROUP[0]; });
+  (H?.sapaw || []).forEach(x => { glow[x.card] = 'hint-sapaw'; targets.add(x.meld); });
+  if (H?.burn && !glow[H.burn]) glow[H.burn] = 'hint-burn';
+  const rec = !H ? '' : myDraw ? (H.pick ? 'pick' : 'draw')
+    : myPlay ? (H.tongits ? 'tongits' : H.melds?.length ? 'meld' : H.sapaw?.length ? 'sapaw' : 'discard') : '';
+  const b = (a, label, cls = '', extra = '') => btn('tg', a, label, `class="${cls} ${rec === a ? 'rec' : ''}" ${extra}`);
 
-  // Each player's melds lie on the felt in front of them (tap one to sapaw onto it).
-  const meldsOf = i => v.melds.map((m, gi) => m.owner !== i ? '' : `<div class="meld ${selMeld === gi ? 'sel' : ''}" data-do="pickMeld" data-i="${gi}" role="button" tabindex="0" aria-label="${nm(m.owner)}'s meld">
+  // Each player's melds lie on the felt in front of them; tap one to sapaw your selected cards onto it.
+  const meldsOf = i => v.melds.map((m, gi) => m.owner !== i ? '' : `<div class="meld ${selMeld === gi ? 'sel' : ''} ${targets.has(gi) ? 'hint-target' : ''}" data-do="pickMeld" data-i="${gi}" role="button" tabindex="0" aria-label="${nm(m.owner)}'s meld">
       ${m.cards.map(c => card(c, { cls: 'sm', k: 'm:' + c, src: from(v.last) })).join('')}</div>`).join('');
-  const seats = [0, 1, 2].map(i => seatBox(i, 3, {
-    active: active(i), cls: i === my ? 'mine-seat' : '',
+  // End-of-round (and Draw) stamps: WIN / TONGITS! / FIGHT! / FOLD / BURNED.
+  const stampOf = i => {
+    const t = v.result ? v.result.tags?.[i] : v.fight && deciding != null ? (i === v.fight.caller ? 'DRAW' : v.fight.fighters.includes(i) ? 'FIGHT' : '') : '';
+    if (!t) return '';
+    const label = t === 'FIGHT' ? 'FIGHT!' : t === 'WIN' && v.result.how === 'tongits' ? 'TONGITS!' : t;
+    return `<div class="stamp ${t.toLowerCase()} ${label === 'TONGITS!' ? 'tongits' : ''}">${label}</div>`;
+  };
+  const n = v.counts.length; // 2 or 3 players
+  const seats = v.counts.map((_, i) => seatBox(i, n, {
+    active: active(i), cls: i === my ? 'mine-seat' : '', layout: n === 2 ? 'tg2' : undefined,
     extra: `<div class="seatinfo">${i === my || v.result ? tgScore(i === my ? v.points : v.result.points[i]) : ''}
-        ${v.exposed[i] ? '' : '<span class="tag">no meld</span>'} ${timerTag(active(i))}</div>`,
+        ${v.exposed[i] ? '' : '<span class="tag">no meld</span>'} ${timerTag(active(i))}</div>${stampOf(i)}`,
     front: `${i === my ? '' : `<div class="fan">${v.result
         ? v.result.hands[i].map(c => card(c, { cls: 'xs face', k: `or${i}:${c}` })).join('')
         : Array.from({ length: v.counts[i] }, (_, j) => card('??', { cls: 'xs', k: `ob${i}:${j}`, src: '#deck' })).join('')}</div>
-      <small>${v.counts[i]} cards</small>`}
-      <div class="melds">${meldsOf(i)}</div>`,
+      <small class="cnt">${v.counts[i]} cards</small>`}
+      <div class="melds ${i === my ? 'mydrop' : ''}" ${i === my && myPlay ? 'data-do="dropArea" role="button" aria-label="Drop area: lay down the selected meld"' : ''}>${meldsOf(i)}</div>`,
   })).join('');
 
   let acts = '', hint = '';
@@ -589,34 +626,70 @@ function tongits(v) {
   else if (deciding != null) {
     acts = deciding === my ? btn('tg', 'fight', 'Fight!', 'class="primary"') + btn('tg', 'fold', 'Fold') : `<span class="muted">${nm(deciding)} is deciding…</span>`;
     hint = `${nm(v.fight.caller)} called Draw! Fight if your points are lower than theirs. Your hand: ${tgScore(v.points)}`;
-  } else if (v.turn === my && v.phase === 'draw') {
-    acts = btn('tg', 'draw', 'Draw', 'class="primary"') + btn('tg', 'pick', 'Take discard', v.top ? '' : 'disabled') + (v.canCall ? btn('tg', 'call', 'Call DRAW', 'class="warn"') : '');
-    hint = 'Tap the stock to draw, or select cards that meld with the top discard and press Take discard.';
-  } else if (v.turn === my) {
-    acts = btn('tg', 'meld', 'Meld') + btn('tg', 'sapaw', 'Sapaw') + btn('hint', '', 'Hint') + btn('tg', 'discard', 'Discard', 'class="primary"');
-    hint = 'Press Meld to lay down your best meld (or select the cards yourself). Tap a table meld, then select cards to Sapaw. End by discarding one card.';
+  } else if (myDraw) {
+    acts = b('draw', 'Draw', 'primary') + b('pick', 'Take discard', '', v.top ? '' : 'disabled') + (v.canCall ? btn('tg', 'call', 'Call DRAW', 'class="warn"') : '');
+    hint = H?.pick ? 'The glowing discard makes a meld with your starred cards: tap it to take it.' : 'Tap the stock to draw a card.';
+  } else if (myPlay) {
+    acts = (H?.tongits ? b('tongits', 'TONGITS!', 'tongits-btn') : '')
+      + b('meld', 'Drop', 'drop') + b('sapaw', 'Sapaw') + b('discard', 'Dump', 'dump')
+      + btn('tg', 'meldall', 'Auto Meld', H?.melds?.length || v.suggest.length ? '' : 'disabled');
+    hint = H?.tongits ? 'You can empty your hand! Press TONGITS! to win double.'
+      : '★ = meld (Drop) · blue = Sapaw onto the glowing meld · 🔥 = best card to Dump. Select cards to see what they can do.';
   } else acts = `<span class="muted">${nm(v.turn)}'s turn…</span>`;
-  const canDraw = !v.result && deciding == null && v.turn === my && v.phase === 'draw';
 
   const center = `<div class="row piles">
-      ${deckPile(canDraw ? 'data-do="tg" data-a="draw" role="button" tabindex="0" aria-label="Draw from stock"' : '', canDraw ? 'glow' : '')}
+      ${deckPile(myDraw ? 'data-do="tg" data-a="draw" role="button" tabindex="0" aria-label="Draw from stock"' : '', myDraw ? 'glow' : '')}
       <div class="pilecount">Stock<br><b>${v.stock}</b></div>
-      <div class="pile" id="discard">${v.top ? card(v.top, { cls: 'sm', k: 'd:' + v.top, src: from(v.last) }) : '<div class="card sm empty"></div>'}</div>
+      <div class="pile ${H?.pick ? 'hint-pick' : ''}" id="discard" ${myDraw && v.top ? 'data-do="pickDiscard" role="button" tabindex="0" aria-label="Take the discard"' : ''}>${v.top ? card(v.top, { cls: 'sm', k: 'd:' + v.top, src: from(v.last) }) : '<div class="card sm empty"></div>'}</div>
       <div class="pilecount">Discard</div>
     </div>
     <div class="log one">${esc(v.log.at(-1) || '')}</div>`;
 
   return tableHtml(seats, center, 'tongits') + `
-    <div class="mine ${active(my) ? 'active' : ''}">
+    <div class="mine tgtray ${active(my) ? 'active' : ''}">
       <div class="trayhead"><div class="status"><b>Your hand</b> ${tgScore(v.points)} ${timerTag(active(my))}
-        <button class="toggle ${meldSort ? 'on' : ''}" data-do="meldsort" aria-pressed="${meldSort}" title="Group your hand by melds">🔀<span class="long"> Sort by meld</span></button></div>
+        <button class="toggle ${meldSort ? 'on' : ''}" data-do="meldsort" aria-pressed="${meldSort}" title="Group your melds together">🔀<span class="long"> Sort</span></button>
+        <button class="toggle ${showHints ? 'on' : ''}" data-do="hints" aria-pressed="${showHints}" title="Signals for what to drop, sapaw and dump">💡<span class="long"> Hints</span></button></div>
         <div class="actions">${acts}</div></div>
+      <div class="sellabel" id="selLabel" aria-live="polite"></div>
       <div class="hand">${sortHand(v).map(([c, gap], j, all) => {
         const o = j - (all.length - 1) / 2; // curved fan: tilt and drop the outer cards
-        return card(c, { cls: (sel.has(c) ? 'sel ' : '') + (gap ? 'gap' : ''), act: 'toggle', k: 'h:' + c, src: '#deck', style: `--r:${(o * 1.6).toFixed(1)}deg;--y:${(o * o * 0.4).toFixed(1)}px` });
+        return card(c, { cls: (sel.has(c) ? 'sel ' : '') + (gap ? 'gap ' : '') + (glow[c] || ''), act: 'toggle', k: 'h:' + c, src: '#deck',
+          style: `--r:${(o * 1.6).toFixed(1)}deg;--y:${(o * o * 0.4).toFixed(1)}px;${style[c] || ''}` });
       }).join('')}</div>
       ${hint ? `<p class="hint">${hint}</p>` : ''}
     </div>`;
+}
+
+// What can the selected cards do right now? Shown as "DROP - SAPAW - DUMP" above your hand, and the
+// places they can go (your drop area, an opponent's meld, the discard pile) light up.
+const rankN = c => RANKS.indexOf(c[0]) + 1;
+function isMeldC(cs) {
+  if (cs.length < 3 || new Set(cs).size !== cs.length) return false;
+  const rs = cs.map(rankN).sort((a, b) => a - b);
+  if (cs.length <= 4 && rs.every(r => r === rs[0])) return true;
+  return cs.every(c => c[1] === cs[0][1]) && rs.every((r, i) => !i || r === rs[i - 1] + 1);
+}
+function selectionInfo() {
+  const v = R?.state;
+  if (R?.game !== 'tongits' || !v || v.result || v.phase === 'fight' || v.turn !== R.mySeat) return null;
+  const cards = [...sel];
+  if (v.phase === 'draw') return { cards, pick: !!v.top && cards.length >= 2 && isMeldC([...cards, v.top]) };
+  return {
+    cards, drop: isMeldC(cards), dump: cards.length === 1,
+    sapaw: v.melds.map((m, i) => (cards.length && isMeldC([...m.cards, ...cards]) ? i : -1)).filter(i => i >= 0),
+  };
+}
+function updateSelUI() {
+  const label = $('#selLabel'), info = selectionInfo();
+  if (!label) return;
+  const parts = !info || !info.cards.length ? [] : info.pick ? ['TAKE DISCARD']
+    : [info.drop && 'DROP', info.sapaw?.length && 'SAPAW', info.dump && 'DUMP'].filter(Boolean);
+  label.textContent = parts.length ? parts.join(' - ') : info?.cards.length ? "These cards don't go together" : '';
+  label.classList.toggle('bad', !parts.length && !!info?.cards.length);
+  $('.mydrop')?.classList.toggle('can', !!info?.drop);
+  document.querySelectorAll('.ptable .meld').forEach(e => e.classList.toggle('can', !!info?.sapaw?.includes(+e.dataset.i)));
+  $('#discard')?.classList.toggle('can', !!info?.pick);
 }
 
 // ---------- Poker ----------
@@ -703,6 +776,7 @@ const clicks = {
     $('.chatbtn').setAttribute('aria-expanded', open);
     if (open) { $('.chatbtn .dot').hidden = true; $('#chatlog').scrollTop = 1e6; }
   },
+  hints: () => { showHints = !showHints; setPref('hints', showHints ? '1' : '0'); sfx.select(); render(); },
   meldsort: () => { meldSort = !meldSort; setPref('meldsort', meldSort ? '1' : '0'); sfx.select(); render(); },
   tab: el => { pickGame = el.dataset.g; setPref('game', pickGame); sfx.select(); showLobby(); $('#tab-' + pickGame)?.focus(); },
   bet: el => {
@@ -720,6 +794,10 @@ const clicks = {
   addbot: () => room('addbot'),
   removebot: () => room('removebot'),
   lobbyTable: () => room('lobby'),
+  landscape: async () => {
+    try { await document.documentElement.requestFullscreen?.(); await screen.orientation?.lock?.('landscape'); }
+    catch { toast('Please rotate your phone sideways'); }
+  },
   avatar: el => run(api('avatar', { avatar: el.dataset.a }).then(() => { sfx.select(); screen = ''; render(); })), // redraw lobby with the new face
   setbet: el => { if (+el.dataset.b !== R.bet) { sfx.coin(); room('setbet', { bet: +el.dataset.b }); } },
   hint: () => {
@@ -728,13 +806,33 @@ const clicks = {
     sel = new Set(m); selMeld = null; sfx.select(); syncSelection();
   },
   toggle: el => { const c = el.dataset.card; sel.has(c) ? sel.delete(c) : sel.add(c); sfx.select(); syncSelection(); },
-  pickMeld: el => { const i = +el.dataset.i; selMeld = selMeld === i ? null : i; sfx.select(); syncSelection(); },
+  pickMeld: el => {
+    const i = +el.dataset.i, info = selectionInfo();
+    if (info?.sapaw?.includes(i)) return act({ type: 'sapaw', cards: info.cards, meld: i });
+    selMeld = selMeld === i ? null : i; sfx.select(); syncSelection();
+  },
+  dropArea: () => {
+    const info = selectionInfo();
+    if (info?.drop) return act({ type: 'meld', cards: info.cards });
+    toast(sel.size ? 'Those cards are not a meld' : 'Select 3+ cards that make a meld, then tap here');
+  },
+  pickDiscard: () => clicks.tg({ dataset: { a: 'pick' } }),
   tg: el => {
     const a = el.dataset.a;
     let cards = [...sel];
+    const H = R.state.hints;
     if (a === 'meld' && !cards.length) { // nothing selected: lay down the best meld in your hand
       cards = R.state.suggest[0] || [];
       if (!cards.length) return toast('No meld in your hand yet');
+    }
+    if (a === 'pick' && !cards.length && H?.pick) cards = H.pick; // take the discard with the cards it melds with
+    if (a === 'sapaw' && !cards.length && selMeld == null && H?.sapaw?.length) { cards = [H.sapaw[0].card]; selMeld = H.sapaw[0].meld; }
+    if (a === 'tongits') return act({ type: 'tongits' });
+    if (a === 'meldall') return act({ type: 'meldall' });
+    if (a === 'discard' && !cards.length && H?.burn) return toast('Select a card to dump. 🔥 marks the best one.');
+    if (a === 'sapaw' && cards.length && selMeld == null) { // pick the meld the selected cards fit
+      const fit = selectionInfo()?.sapaw?.[0];
+      if (fit != null) selMeld = fit;
     }
     if (a === 'discard' && cards.length !== 1) return toast('Select exactly one card to discard');
     if (a === 'sapaw' && selMeld == null) return toast('Tap a meld on the table first');

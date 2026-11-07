@@ -86,6 +86,50 @@ for (let i = 0; i < 300; i++) {
   assert.equal(blackjack.stake(10, 5000), 1000);
 }
 
+// Tongits with 2 players plays to the end, cards conserved, coins zero-sum.
+let tongitsWins = 0;
+for (let i = 0; i < 800; i++) {
+  const t2 = play(tongits, bots(2), 10, i);
+  assert.equal(t2.hands.length, 2);
+  assert.equal(new Set([...t2.hands.flat(), ...t2.stock, ...t2.discard, ...t2.melds.flatMap(m => m.cards)]).size, 52);
+  assert.equal(t2.result.deltas.reduce((a, b) => a + b, 0), 0);
+  if (t2.result.how === 'tongits') tongitsWins++;
+}
+assert(tongitsWins > 0, 'bots should sometimes go out (Tongits) in 2-player games');
+
+// Recognising Tongits: planOut finds a way to empty the hand, including sapaw and a final discard.
+{
+  const P = tongits.planOut;
+  assert(P(['5H', '5S', '5D', '7C', '8C', '9C'], []), 'two melds, nothing left');
+  assert.equal(P(['5H', '5S', '5D', '7C', '8C', '9C', 'KD'], []).discard, 'KD', 'one loose card is the final discard');
+  assert.equal(P(['5H', '5S', '5D', 'KD', 'QH'], []), null, 'two loose cards: cannot go out');
+  const table = [{ owner: 1, cards: ['JH', 'QH', 'KH'] }];
+  const p = P(['5H', '5S', '5D', 'TH', '2C'], table);
+  assert(p && p.sapaws.some(x => x.card === 'TH' && x.meldIndex === 0) && p.discard === '2C', 'sapaw 10H onto J-Q-K hearts, discard 2C');
+  // A split that bestMelds would not choose: 4-4-4-4 + 5-6 of spades needs the 4S in the run.
+  assert(P(['4H', '4D', '4C', '4S', '5S', '6S'], []), 'finds 4H 4D 4C + 4S 5S 6S');
+
+  // The one-tap move empties the hand and ends the round as Tongits; the opponent's meld counts as sapaw-ed.
+  const s = tongits.start(bots(2), 10, 0);
+  s.hands[0] = ['5H', '5S', '5D', 'TH', '2C']; s.melds = [{ owner: 1, cards: ['JH', 'QH', 'KH'] }]; s.exposed[1] = true;
+  assert.equal(tongits.view(s, 0).hints.tongits, true);
+  tongits.act(s, 0, { type: 'tongits' });
+  assert.equal(s.result.how, 'tongits'); assert.equal(s.hands[0].length, 0);
+  assert.deepEqual(s.melds[0].cards, ['TH', 'JH', 'QH', 'KH']); assert.equal(s.discard.at(-1), '2C');
+  assert.equal(s.result.deltas[0], 20, 'Tongits pays double');
+
+  // Hints: green melds, blue sapaw with its target, orange burn, and the discard pick when drawing.
+  const h = tongits.start(bots(2), 10, 0);
+  h.hands[0] = ['5H', '5S', '5D', 'TH', 'KD', '2C']; h.melds = [{ owner: 1, cards: ['JH', 'QH', 'KH'] }];
+  const hv = tongits.view(h, 0).hints;
+  assert.deepEqual(hv.melds, [['5H', '5S', '5D']]);
+  assert.deepEqual(hv.sapaw, [{ card: 'TH', meld: 0 }]);
+  assert.equal(hv.burn, 'KD', 'burn the costly loose card'); assert.equal(hv.tongits, false);
+  h.turn = 0; h.phase = 'draw'; h.discard = ['5C'];
+  assert.deepEqual(tongits.view(h, 0).hints.pick.sort(), ['5D', '5H', '5S']);
+  assert.equal(tongits.view(h, 1).hints, null, 'no hints when it is not your turn');
+}
+
 // Illegal moves are rejected and leave state unchanged.
 const t = tongits.start(bots(3), 10, 0);
 assert.throws(() => tongits.act(t, 1, { type: 'draw' }), /Not your turn/);

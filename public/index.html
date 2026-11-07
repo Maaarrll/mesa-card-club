@@ -21,6 +21,14 @@
   <div id="sky" aria-hidden="true"></div>
   <div id="app"></div>
   <div id="toast" role="status" aria-live="polite"></div>
+  <!-- Phones at a table must be held sideways; shown by CSS only in portrait. -->
+  <div id="rotate" class="rotate" role="alertdialog" aria-label="Turn your phone sideways">
+    <div class="rotate-phone" aria-hidden="true">📱</div>
+    <h2>Turn your phone sideways</h2>
+    <p>The table is made for landscape. Rotate your phone to keep playing.</p>
+    <button class="primary" data-do="landscape">Go full screen</button>
+    <button class="link" data-do="leave">Leave table</button>
+  </div>
   <script src="app.js"></script>
 </body>
 </html>

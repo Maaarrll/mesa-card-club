@@ -1,4 +1,4 @@
-// Tongits, 3 players, standard rules: draw or take the discard (only into a meld), lay melds,
+// Tongits, 2 or 3 players, standard rules: draw or take the discard (only into a meld), lay melds,
 // sapaw onto any meld, discard. Empty hand = Tongits. Call "Draw" to fight on lowest points.
 const { deck, shuffle, rank, suit, pretty } = require('./cards');
 
@@ -51,18 +51,68 @@ function bestMelds(hand) {
   return best;
 }
 
+// Can this hand be emptied right now? Tries every way to split it into melds, then sapaws the
+// leftovers onto any meld on the table (or one just laid); at most one card may remain, as the final
+// discard. Returns { melds, sapaws: [{ card, meldIndex }], discard } or null.
+function planOut(hand, tableMelds) {
+  const cands = candidates(hand), used = new Set(), chosen = [];
+  let plan = null;
+  const tryLeaf = () => {
+    const table = [...tableMelds.map(m => [...m.cards]), ...chosen.map(m => [...m])];
+    let rest = hand.filter(c => !used.has(c));
+    const sapaws = [];
+    for (let moved = true; moved && rest.length;) {
+      moved = false;
+      for (const c of rest) {
+        const i = table.findIndex(m => isMeld([...m, c]));
+        if (i >= 0) { table[i].push(c); sapaws.push({ card: c, meldIndex: i }); rest = rest.filter(x => x !== c); moved = true; break; }
+      }
+    }
+    if (rest.length <= 1) plan = { melds: chosen.map(m => [...m]), sapaws, discard: rest[0] || null };
+  };
+  (function go(from) {
+    tryLeaf();
+    for (let k = from; k < cands.length && !plan; k++) {
+      if (cands[k].some(c => used.has(c))) continue;
+      cands[k].forEach(c => used.add(c)); chosen.push(cands[k]);
+      go(k + 1);
+      cands[k].forEach(c => used.delete(c)); chosen.pop();
+    }
+  })(0);
+  return plan;
+}
+
+// Lights for the player whose turn it is: what to meld, what to sapaw (and where), what to burn,
+// whether the top discard can be taken, and whether they can go out (Tongits) now.
+function hints(s, seat) {
+  if (s.result || s.phase === 'fight' || s.turn !== seat) return null;
+  const hand = s.hands[seat];
+  if (s.phase === 'draw') {
+    const top = s.discard.at(-1), m = top && bestMelds([...hand, top]).melds.find(x => x.includes(top));
+    return { pick: m ? m.filter(c => c !== top) : null };
+  }
+  const melds = bestMelds(hand).melds, inMeld = new Set(melds.flat()), sapaw = [];
+  for (const c of hand) {
+    if (inMeld.has(c)) continue;
+    const i = s.melds.findIndex(m => isMeld([...m.cards, c]));
+    if (i >= 0) sapaw.push({ card: c, meld: i });
+  }
+  const loose = hand.filter(c => !inMeld.has(c) && !sapaw.some(x => x.card === c));
+  return { melds, sapaw, burn: bestDiscard(loose.length ? loose : hand), tongits: !!planOut(hand, s.melds) };
+}
+
 function start(players, bet, round = 0) {
-  const dealer = round % 3, d = shuffle(deck());
+  const n = players.length, dealer = round % n, d = shuffle(deck());
   const hands = players.map((_, i) => sortCards(d.splice(0, i === dealer ? 13 : 12)));
   return {
-    bet, names: players.map(p => p.name), hands, stock: d, discard: [], melds: [],
-    turn: dealer, phase: 'play', exposed: [false, false, false], sapawed: [false, false, false],
+    n, bet, names: players.map(p => p.name), hands, stock: d, discard: [], melds: [],
+    turn: dealer, phase: 'play', exposed: Array(n).fill(false), sapawed: Array(n).fill(false),
     fight: null, log: [`${players[dealer].name} is dealer and plays first`], result: null,
   };
 }
 
 function finish(s, winner, how) {
-  const deltas = [0, 0, 0];
+  const deltas = s.hands.map(() => 0);
   s.hands.forEach((_, i) => {
     if (i === winner) return;
     const pay = s.bet * (how === 'tongits' ? 2 : 1) * (how === 'stock' && !s.exposed[i] ? 2 : 1);
@@ -72,7 +122,11 @@ function finish(s, winner, how) {
   const text = how === 'tongits' ? `${n} TONGITS! (double pay)`
     : how === 'draw' ? `${n} wins the Draw with ${pts} points`
     : `Stock ran out: ${n} wins with ${pts} points (players with no meld are burned, pay double)`;
-  s.result = { winner, how, deltas, text };
+  // A stamp per player for the table: WIN, plus FIGHT / FOLD / DRAW after a Draw call, BURNED when the stock ran out.
+  const tags = s.hands.map((_, i) => i === winner ? 'WIN'
+    : how === 'stock' && !s.exposed[i] ? 'BURNED'
+    : how === 'draw' && s.fight ? (i === s.fight.caller ? 'DRAW' : s.fight.fighters.includes(i) ? 'FIGHT' : 'FOLD') : '');
+  s.result = { winner, how, deltas, text, tags };
   s.phase = 'over';
   s.log.push(text);
 }
@@ -84,7 +138,7 @@ function settleFight(s) {
 }
 
 function endByCount(s) {
-  const order = [1, 2, 3].map(k => (s.turn + k) % 3);
+  const order = s.hands.map((_, k) => (s.turn + 1 + k) % s.hands.length);
   const pool = order.filter(i => s.exposed[i]);
   const cand = pool.length ? pool : order;
   finish(s, cand.reduce((b, i) => (handPoints(s.hands[i]) < handPoints(s.hands[b]) ? i : b)), 'stock');
@@ -120,7 +174,7 @@ function act(s, seat, a) {
       if (!s.exposed[seat]) throw new Error('You need your own meld on the table to call Draw');
       if (s.sapawed[seat]) throw new Error('Someone sapaw-ed your meld, so you cannot call Draw this turn');
       s.log.push(`${name} calls DRAW!`);
-      const others = [1, 2].map(k => (seat + k) % 3);
+      const others = s.hands.map((_, k) => (seat + 1 + k) % s.hands.length).slice(0, -1);
       others.filter(i => !s.exposed[i]).forEach(i => s.log.push(`${s.names[i]} has no meld and must fold`));
       s.phase = 'fight';
       s.fight = { caller: seat, pending: others.filter(i => s.exposed[i]), fighters: [] };
@@ -145,6 +199,15 @@ function act(s, seat, a) {
       s.log.push(`${name} takes ${pretty(top)} and melds`);
       return checkOut();
     }
+    case 'meldall': {
+      // Auto Meld: lay down every meld in the hand at once.
+      need('play');
+      const all = bestMelds(hand).melds;
+      if (!all.length) throw new Error('No meld in your hand yet');
+      for (const m of all) { fromHand(m); layDown(m); }
+      s.log.push(`${name} lays down ${all.length} meld${all.length > 1 ? 's' : ''}`);
+      return checkOut();
+    }
     case 'meld':
       need('play');
       if (!isMeld(cs)) throw new Error('Not a valid meld (3-4 of a kind, or 3+ in a row of one suit)');
@@ -163,6 +226,22 @@ function act(s, seat, a) {
       s.log.push(`${name} sapaw ${cs.map(pretty).join(' ')} on ${s.names[m.owner]}'s meld`);
       return checkOut();
     }
+    case 'tongits': {
+      // Go out in one move: lay every meld, sapaw the rest, discard the last card if one is left.
+      need('play');
+      const plan = planOut(hand, s.melds);
+      if (!plan) throw new Error('You can\'t empty your hand yet');
+      for (const m of plan.melds) { fromHand(m); layDown(m); }
+      for (const sp of plan.sapaws) {
+        fromHand([sp.card]);
+        const m = s.melds[sp.meldIndex];
+        m.cards = sortCards([...m.cards, sp.card]);
+        if (m.owner !== seat) s.sapawed[m.owner] = true;
+      }
+      if (plan.discard) { fromHand([plan.discard]); s.discard.push(plan.discard); }
+      s.log.push(`${name} empties their hand!`);
+      return finish(s, seat, 'tongits');
+    }
     case 'discard':
       need('play');
       if (!hand.includes(a.card)) throw new Error('Select one card to discard');
@@ -172,7 +251,7 @@ function act(s, seat, a) {
       s.log.push(`${name} discards ${pretty(a.card)}`);
       if (!hand.length) return finish(s, seat, 'tongits');
       if (!s.stock.length) return endByCount(s);
-      s.turn = (seat + 1) % 3;
+      s.turn = (seat + 1) % s.hands.length;
       s.phase = 'draw';
       return;
   }
@@ -190,6 +269,7 @@ function botAct(s, seat) {
     const m = top && bestMelds([...hand, top]).melds.find(x => x.includes(top));
     return m ? { type: 'pick', cards: m.filter(c => c !== top) } : { type: 'draw' };
   }
+  if (planOut(hand, s.melds)) return { type: 'tongits' };
   const m = bestMelds(hand).melds[0];
   if (m) return { type: 'meld', cards: m };
   for (const c of hand) for (let i = 0; i < s.melds.length; i++) {
@@ -216,13 +296,13 @@ function view(s, seat) {
     top: s.discard.at(-1) || null, melds: s.melds, turn: s.turn, phase: s.phase, exposed: s.exposed,
     canCall: s.phase === 'draw' && s.turn === seat && s.exposed[seat] && !s.sapawed[seat],
     points: handPoints(s.hands[seat]), fight: s.fight, log: s.log.slice(-6), last: s.last ?? s.turn,
-    suggest: bestMelds(s.hands[seat]).melds,
+    suggest: bestMelds(s.hands[seat]).melds, hints: hints(s, seat),
     result: s.result && { ...s.result, hands: s.hands, points: s.hands.map(handPoints) },
   };
 }
 
 module.exports = {
   // stake = held while the round runs; covers the worst loss (2x bet for Tongits or burned).
-  min: 3, max: 3, minChips: bet => bet * 4, stake: bet => bet * 4,
-  start, act, turn, botAct, timeoutAct, view, isMeld, bestMelds, handPoints,
+  min: 2, max: 3, minChips: bet => bet * 4, stake: bet => bet * 4,
+  start, act, turn, botAct, timeoutAct, view, isMeld, bestMelds, handPoints, planOut, hints,
 };

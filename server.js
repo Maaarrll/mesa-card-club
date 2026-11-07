@@ -175,7 +175,8 @@ function startRound(r) {
   const g = GAMES[r.game];
   clearTimeout(r.nextTimer);
   tidy(r);
-  while (r.seats.length < g.min) r.seats.push({ bot: true, name: BOT_NAMES.find(n => !r.seats.some(s => s.name === n)) });
+  // No automatic bots: the table plays with whoever is seated (the host can still press "Add bot").
+  if (r.seats.length < g.min) throw fail(400, `Need at least ${g.min} players. Share the code with a friend or add a bot.`);
   const poor = r.seats.filter(s => s.id && users[s.id].chips < g.minChips(r.bet));
   if (poor.length) throw fail(400, `${poor.map(s => s.name).join(', ')} need at least ${g.minChips(r.bet)} coins for this table`);
   r.state = g.start(r.seats.map(s => ({ name: s.name, bot: !!s.bot, chips: s.id ? users[s.id].chips : Infinity })), r.bet, r.round++);
