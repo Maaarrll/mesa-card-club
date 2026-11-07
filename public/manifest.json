@@ -1,0 +1,10 @@
+{
+  "name": "Mesa Card Club",
+  "short_name": "Mesa",
+  "description": "Tongits, Poker and Blackjack with friends",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#2b5876",
+  "theme_color": "#2b5876",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Mesa Admin</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .admin { max-width: 980px; margin: 0 auto; padding: 18px 16px; display: grid; gap: 16px; }
+    .admin table { width: 100%; border-collapse: collapse; }
+    .admin th, .admin td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    .admin th { color: var(--muted); font-size: 13px; }
+    .admin td.num { font-variant-numeric: tabular-nums; font-weight: 800; white-space: nowrap; }
+    .admin .email { color: var(--muted); font-size: 13px; word-break: break-all; }
+    .admin .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+    .admin .btns button { padding: 6px 10px; min-height: 0; font-size: 13px; }
+    .admin .btns input { width: 110px; margin: 0; padding: 6px 8px; }
+    .admin .plus { color: #7ee0b5; } .admin .minus { color: #ff8fa3; }
+    .admin .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #7ee0b5; margin-right: 4px; }
+    .admin .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .admin .toolbar input { flex: 1; min-width: 180px; margin: 0; }
+    @media (max-width: 700px) { .admin thead { display: none; } .admin tr { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--line); } .admin td { border: 0; padding: 2px 0; } }
+  </style>
+</head>
+<body>
+  <div id="sky" aria-hidden="true"></div>
+  <header class="top"><div class="logo sm">♠♥ Mesa · Admin</div><div class="spacer"></div><button id="lock" hidden>🔒 Lock</button></header>
+  <main class="admin">
+    <section class="panel" id="login">
+      <h2>Admin key</h2>
+      <p class="muted">The key is in <b>data/admin-key.txt</b> on the computer running the server.</p>
+      <form id="keyForm" class="toolbar"><input id="key" type="password" autocomplete="off" placeholder="Paste the admin key" aria-label="Admin key" required><button class="primary">Open</button></form>
+    </section>
+    <section class="panel" id="players" hidden>
+      <div class="toolbar"><h2 style="margin:0">Players</h2><input id="q" type="search" placeholder="Search name or Gmail" aria-label="Search players"><button id="refresh">Refresh</button></div>
+      <p class="muted" id="reason-row"><label>Reason for changes (optional, saved in the history)<input id="reason" maxlength="100" placeholder="e.g. Tournament prize"></label></p>
+      <table><thead><tr><th>Player</th><th>Coins</th><th>Add / remove</th></tr></thead><tbody id="rows"></tbody></table>
+    </section>
+    <section class="panel" id="history" hidden>
+      <h2>Recent changes</h2>
+      <table><thead><tr><th>When</th><th>Player</th><th>Change</th><th>Coins after</th><th>Reason</th></tr></thead><tbody id="log"></tbody></table>
+    </section>
+  </main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script>
+    const $ = s => document.querySelector(s);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const fmt = n => Number(n).toLocaleString();
+    let key = '', data = { players: [], log: [] };
+    try { key = sessionStorage.getItem('adminKey') || ''; } catch { /* storage blocked: ask each time */ }
+
+    function toast(msg) {
+      const t = $('#toast'); t.textContent = msg; t.className = 'show';
+      clearTimeout(toast.t); toast.t = setTimeout(() => (t.className = ''), 2800);
+    }
+    async function call(body) {
+      const r = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, ...body }) });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 403 || r.status === 429) lock();
+      if (!r.ok) throw new Error(j.message || 'Request failed');
+      return j;
+    }
+    function lock() {
+      key = '';
+      try { sessionStorage.removeItem('adminKey'); } catch {}
+      $('#login').hidden = false; $('#players').hidden = $('#history').hidden = $('#lock').hidden = true;
+    }
+    async function load(body = { op: 'list' }) {
+      data = await call(body);
+      try { sessionStorage.setItem('adminKey', key); } catch {}
+      $('#login').hidden = true; $('#players').hidden = $('#history').hidden = $('#lock').hidden = false;
+      draw();
+    }
+    function draw() {
+      const q = $('#q').value.trim().toLowerCase();
+      const list = data.players.filter(p => !q || p.name.toLowerCase().includes(q) || p.email.includes(q));
+      $('#rows').innerHTML = list.map(p => `<tr>
+        <td><b>${p.online ? '<span class="dot" title="Online"></span>' : ''}${esc(p.name)}</b><div class="email">${esc(p.email)}</div></td>
+        <td class="num">🪙 ${fmt(p.chips)}${p.held ? `<div class="email">${fmt(p.held)} on a table</div>` : ''}</td>
+        <td><div class="btns" data-email="${esc(p.email)}">
+          <button data-n="100">+100</button><button data-n="1000">+1,000</button>
+          <button data-n="-100">−100</button><button data-n="-1000">−1,000</button>
+          <input type="number" inputmode="numeric" placeholder="Amount" aria-label="Custom amount for ${esc(p.name)}">
+          <button data-custom="1" class="primary">Apply</button>
+        </div></td></tr>`).join('') || '<tr><td colspan="3" class="muted">No players found</td></tr>';
+      $('#log').innerHTML = data.log.map(l => `<tr>
+        <td class="email">${esc(new Date(l.at).toLocaleString())}</td><td>${esc(l.name)}</td>
+        <td class="num ${l.amount > 0 ? 'plus' : 'minus'}">${l.amount > 0 ? '+' : ''}${fmt(l.amount)}</td>
+        <td class="num">🪙 ${fmt(l.after)}</td><td>${esc(l.reason)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No changes yet</td></tr>';
+    }
+    async function adjust(email, amount) {
+      const p = data.players.find(x => x.email === email);
+      if (!Number.isInteger(amount) || !amount) return toast('Type a whole number, like 500 or -200');
+      if (Math.abs(amount) >= 10000 && !confirm(`${amount > 0 ? 'Add' : 'Remove'} ${fmt(Math.abs(amount))} coins ${amount > 0 ? 'to' : 'from'} ${p.name}?`)) return;
+      try {
+        await load({ op: 'adjust', email, amount, reason: $('#reason').value });
+        toast(`${p.name}: ${amount > 0 ? '+' : ''}${fmt(amount)} coins`);
+      } catch (e) { toast(e.message); }
+    }
+
+    $('#keyForm').addEventListener('submit', e => { e.preventDefault(); key = $('#key').value.trim(); load().catch(err => toast(err.message)); });
+    $('#q').addEventListener('input', draw);
+    $('#refresh').addEventListener('click', () => load().catch(err => toast(err.message)));
+    $('#lock').addEventListener('click', lock);
+    $('#rows').addEventListener('click', e => {
+      const b = e.target.closest('button'), box = b && b.closest('[data-email]');
+      if (!box) return;
+      adjust(box.dataset.email, b.dataset.custom ? Number(box.querySelector('input').value) : Number(b.dataset.n));
+    });
+    $('#rows').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input')) e.target.nextElementSibling.click(); });
+    if (key) load().catch(() => lock());
+  </script>
+</body>
+</html>

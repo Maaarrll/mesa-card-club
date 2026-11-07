@@ -1,0 +1,13 @@
+{
+  "name": "mesa-card-club",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tongits, Texas Hold'em and Blackjack with friends in the browser",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node selfcheck.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

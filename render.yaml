@@ -1,0 +1,16 @@
+# Render Blueprint: Render reads this to create the web service.
+# shortcut: free plan has no disk, so accounts/coins reset when the service sleeps or redeploys;
+# add a paid disk (and set DATA_DIR to it) if players should keep their coins.
+services:
+  - type: web
+    name: mesa-card-club
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: ADMIN_KEY            # the /admin key; Render generates it, find it under Environment
+        generateValue: true
