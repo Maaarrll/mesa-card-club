@@ -96,6 +96,21 @@ function act(s, seat, a) {
 
 // During betting the timer follows the first player who hasn't locked in a bet.
 const turn = s => (s.result ? null : s.phase === 'bet' ? s.ready.indexOf(false) : s.turn);
+
+// A player left mid-round: during betting they sit out with no bet; otherwise their hand stands.
+function forfeit(s, seat) {
+  if (s.result) return;
+  if (s.phase === 'bet') {
+    if (s.ready[seat]) return; // bet already placed: it plays out standing
+    s.bets[seat] = 0; s.ready[seat] = true;
+    s.log.push(`${s.names[seat]} left before betting`);
+    if (s.ready.every(Boolean)) deal(s);
+    return;
+  }
+  if (s.done[seat]) return;
+  if (s.turn === seat) return act(s, seat, { type: 'stand' });
+  s.done[seat] = true; // stands when their turn would come
+}
 const botAct = (s, seat) => (s.phase === 'bet' ? { type: 'minbet' } : { type: total(s.hands[seat]) < 17 ? 'hit' : 'stand' });
 const timeoutAct = s => ({ type: s.phase === 'bet' ? 'minbet' : 'stand' });
 
@@ -111,5 +126,5 @@ function view(s, seat) {
 // stake = held while the round runs: covers the biggest bet you may place, doubled.
 module.exports = {
   min: 1, max: 5, minChips: () => 20, stake: (bet, chips) => 2 * maxBet(chips), tableBet: false,
-  start, act, turn, botAct, timeoutAct, view, total,
+  start, act, turn, botAct, timeoutAct, forfeit, view, total,
 };

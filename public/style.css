@@ -776,3 +776,76 @@ button.dump { background: linear-gradient(135deg, #d4475d, #8f2337); color: #fff
   .result button { min-height: 28px; padding: 2px 10px; font-size: 12px; }
   .result .chipsrow.small .betchip { width: 30px; height: 30px; font-size: 10px; border-width: 2px; }
 }
+.stamp.left { color: #c9d3e6; }
+
+/* ---------- Tongits table: stadium-shaped table with DROP AREA boxes (like the original game) ---------- */
+.ptable.tongits .tfelt { border-radius: 160px; inset: 6% 3%; }
+.ptable.tongits .tcenter2 { position: absolute; inset: 9% 12% 7%; width: auto !important; max-height: none !important; transform: none !important;
+  overflow: visible; display: block; padding: 0; }
+.ptable.tongits.two .tcenter2 { inset: 19% 7% 7%; }
+.tgrid { display: grid; height: 100%; gap: 8px; grid-template-columns: 1fr minmax(120px, .7fr) 1fr;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "zl piles zr" "zm zm zm"; }
+.tgrid.two { grid-template-columns: 1.5fr minmax(120px, 1fr); grid-template-areas: "zl piles" "zm zm"; }
+.tzone { position: relative; min-width: 0; min-height: 0; border-radius: 16px; border: 2px solid rgba(255, 255, 255, .16); background: rgba(0, 0, 0, .12);
+  padding: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; overflow: hidden; transition: border-color .3s, background .3s; }
+.tzone.zl { grid-area: zl; } .tzone.zr { grid-area: zr; } .tzone.zm { grid-area: zm; }
+.tzone.turn { border-color: rgba(255, 212, 121, .6); }
+.zlabel { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-weight: 900; letter-spacing: 2px; font-size: 13px;
+  color: rgba(255, 255, 255, .14); pointer-events: none; }
+.zmelds { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-content: center; max-width: 100%; }
+.tzone .meld { padding: 3px 4px; }
+.ptable.tongits .tzone .meld .card.sm { width: 40px; height: 56px; }
+.ptable.tongits .tzone .meld .card.sm b { font-size: 13px; } .ptable.tongits .tzone .meld .card.sm .pip { font-size: 17px; margin-bottom: 3px; }
+.ptable.tongits .tzone .meld .card + .card { margin-left: -16px; }
+.tzone .reveal { position: relative; z-index: 1; display: flex; }
+.tzone .reveal .card + .card { margin-left: -14px; }
+.ptable.tongits .tzone .reveal .card.face { width: 30px; height: 42px; padding: 2px 3px; }
+.ptable.tongits .tzone .reveal .card.face b { font-size: 11px; } .ptable.tongits .tzone .reveal .card.face .pip { display: none; }
+.zstamp { position: absolute; right: 12px; top: 6px; z-index: 2; }
+.tzone.mydrop.can { border: 2px dashed #4be37f; background: rgba(75, 227, 127, .15); cursor: pointer; outline: none; }
+.tzone.mydrop.can .zlabel { color: rgba(191, 245, 210, .75); }
+.tpiles { grid-area: piles; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-width: 0; }
+.tpiles .piles { gap: 14px; align-items: flex-start; flex-wrap: nowrap; }
+.tpiles .col { gap: 3px; }
+.tpiles .log.one { max-width: 100%; }
+/* Opponent's cards in hand: a small card back with the count on it. */
+.handcount { position: absolute; top: -8px; left: calc(50% + 16px); width: 24px; height: 32px; border-radius: 4px; z-index: 3;
+  display: grid; place-items: center; font-weight: 900; font-size: 13px; color: #fff; text-shadow: 0 1px 2px #000;
+  background: repeating-linear-gradient(45deg, var(--back1) 0 4px, var(--back2) 4px 8px); border: 2px solid #fff; box-shadow: 0 2px 4px rgba(0, 0, 0, .4); }
+@media (max-width: 860px) {
+  .ptable.tongits .tfelt { border-radius: 100px; }
+  .ptable.tongits.three .tcenter2 { inset: 9% 14% 7%; }
+  .tgrid { gap: 5px; }
+  .zlabel { font-size: 10px; letter-spacing: 1px; }
+  .ptable.tongits .tzone .meld .card.sm { width: 30px; height: 42px; }
+  .ptable.tongits .tzone .meld .card + .card { margin-left: -13px; }
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .ptable.tongits .tfelt { border-radius: 90px; inset: 5% 2%; border-width: 6px; }
+  .ptable.tongits.three .tcenter2 { inset: 8% 13% 6%; }
+  .ptable.tongits.two .tcenter2 { inset: 21% 5% 6%; }
+  .tgrid { gap: 4px; grid-template-columns: 1fr minmax(96px, .6fr) 1fr; }
+  .tgrid.two { grid-template-columns: 1.6fr minmax(96px, 1fr); }
+  .tzone { padding: 2px; border-radius: 10px; }
+  .ptable.tongits .tzone .meld { padding: 1px 2px; }
+  .ptable.tongits .tzone .meld .card.sm { width: 24px; height: 34px; padding: 1px 2px; }
+  .ptable.tongits .tzone .meld .card.sm b { font-size: 10px; } .ptable.tongits .tzone .meld .card.sm .pip { display: none; }
+  .ptable.tongits .tzone .meld .card + .card { margin-left: -10px; }
+  .tpiles .log.one { display: none; }
+  .tpiles .piles { gap: 8px; }
+  .handcount { width: 18px; height: 24px; font-size: 10px; top: -4px; left: calc(50% + 10px); }
+  .zstamp .stamp { font-size: 13px; }
+}
+/* Busy drop areas: smaller cards so every meld fits. */
+.ptable.tongits .tzone.dense .zmelds { gap: 3px; }
+.ptable.tongits .tzone.dense .meld { padding: 2px 3px; }
+.ptable.tongits .tzone.dense .meld .card.sm { width: 28px; height: 39px; padding: 1px 2px; }
+.ptable.tongits .tzone.dense .meld .card.sm b { font-size: 10px; } .ptable.tongits .tzone.dense .meld .card.sm .pip { display: none; }
+.ptable.tongits .tzone.dense .meld .card + .card { margin-left: -12px; }
+.ptable.tongits .tzone.dense .reveal .card.face { width: 24px; height: 34px; }
+@media (orientation: landscape) and (max-height: 500px) {
+  .ptable.tongits .tzone.dense .meld .card.sm { width: 20px; height: 28px; }
+  .ptable.tongits .tzone.dense .meld .card.sm b { font-size: 9px; }
+  .ptable.tongits .tzone.dense .meld .card + .card { margin-left: -9px; }
+  .ptable.tongits .tzone .reveal .card.face { width: 20px; height: 28px; }
+}

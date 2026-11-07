@@ -260,6 +260,17 @@ function act(s, seat, a) {
 
 const turn = s => (s.result ? null : s.phase === 'fight' ? s.fight.pending[0] : s.turn);
 
+// A player left mid-round: the round ends and they pay the bet to each player still at the table
+// (no bot keeps playing their cards).
+function forfeit(s, seat) {
+  if (s.result) return;
+  const deltas = s.hands.map((_, i) => (i === seat ? -s.bet * (s.hands.length - 1) : s.bet));
+  const text = `${s.names[seat]} left the table: they pay ${s.bet} to each player`;
+  s.result = { winner: null, how: 'left', deltas, text, tags: s.hands.map((_, i) => (i === seat ? 'LEFT' : '')) };
+  s.phase = 'over';
+  s.log.push(text);
+}
+
 function botAct(s, seat) {
   const hand = s.hands[seat];
   if (s.phase === 'fight') return { type: handPoints(hand) <= 12 ? 'fight' : 'fold' };
@@ -304,5 +315,5 @@ function view(s, seat) {
 module.exports = {
   // stake = held while the round runs; covers the worst loss (2x bet for Tongits or burned).
   min: 2, max: 3, minChips: bet => bet * 4, stake: bet => bet * 4,
-  start, act, turn, botAct, timeoutAct, view, isMeld, bestMelds, handPoints, planOut, hints,
+  start, act, turn, botAct, timeoutAct, forfeit, view, isMeld, bestMelds, handPoints, planOut, hints,
 };

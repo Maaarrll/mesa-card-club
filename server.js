@@ -104,11 +104,11 @@ function roomView(r, email) {
     state: r.state && g.view(r.state, seat),
   };
 }
-function sendTo(email) {
+function sendTo(email, notice) {
   const set = clients.get(email);
   if (!set?.size) return;
   const r = rooms.get(userRoom.get(email));
-  const data = `data: ${JSON.stringify({ me: publicUser(users[email]), room: r ? roomView(r, email) : null })}\n\n`;
+  const data = `data: ${JSON.stringify({ me: publicUser(users[email]), room: r ? roomView(r, email) : null, notice })}\n\n`;
   set.forEach(res => res.write(data));
 }
 const push = r => r.seats.forEach(s => s.id && !s.left && sendTo(s.id));
@@ -133,6 +133,9 @@ function update(r) {
     clearTimeout(r.nextTimer);
     r.nextTimer = setTimeout(() => {
       if (r.state !== finished || rooms.get(r.code) !== r) return; // host already dealt, changed players, or table closed
+      // Someone left and too few players remain: close the table instead of waiting forever.
+      const gone = r.seats.filter(x => x.left);
+      if (gone.length && r.seats.length - gone.length < GAMES[r.game].min) return closeTable(r, `${gone.map(x => x.name).join(', ')} left, so the table closed.`);
       try { startRound(r); } catch (e) { chat(r, '•', `${e.message}. The host can deal again when ready.`); push(r); }
     }, NEXT_ROUND_MS);
   }
@@ -152,7 +155,8 @@ function schedule(r) {
   const ms = auto ? Math.max(2000, (r.dealtAt || 0) + 4500 - Date.now()) : 30000;
   if (!auto) r.deadline = Date.now() + ms;
   r.timer = setTimeout(() => {
-    try { g.act(s, seat, (auto ? g.botAct : g.timeoutAct)(s, seat)); }
+    // Real bots play to win; a player who left only gets safe moves, never a bot gambling their coins.
+    try { g.act(s, seat, (r.seats[seat].bot ? g.botAct : g.timeoutAct)(s, seat)); }
     catch (e) {
       // Never leave a table frozen: fall back to the safest move.
       console.error('auto move failed, trying the safe move', r.code, e);
@@ -194,17 +198,31 @@ function startRound(r) {
   update(r);
 }
 
+// Close a table: everyone still seated goes back to the lobby with a short message.
+function closeTable(r, notice) {
+  clearTimeout(r.timer); clearTimeout(r.nextTimer);
+  rooms.delete(r.code);
+  for (const s of humans(r)) { userRoom.delete(s.id); sendTo(s.id, notice); }
+}
+
 function leave(r, email) {
   userRoom.delete(email);
   const i = r.seats.findIndex(s => s.id === email && !s.left);
   if (i < 0) return;
-  chat(r, '•', `${r.seats[i].name} left`);
-  if (active(r)) r.seats[i].left = true; // a bot finishes their round; they still win or lose it
-  else { r.seats.splice(i, 1); r.state = null; }
+  const name = r.seats[i].name, g = GAMES[r.game];
+  chat(r, '•', `${name} left`);
+  if (active(r)) {
+    // Leaving mid-round counts as giving up your hand: poker folds, blackjack stands (or sits out if
+    // no bet yet), tongits ends the round with the leaver paying the bet. No bot plays their coins.
+    g.forfeit(r.state, i);
+    r.seats[i].left = true;
+  } else { r.seats.splice(i, 1); r.state = null; }
   const left = humans(r);
-  // Last human gone: close the table, but a running round plays out first so leaving can't dodge a loss.
+  // Last human gone: close the table (a round still running is settled first, in update()).
   if (!left.length && !active(r)) { clearTimeout(r.timer); clearTimeout(r.nextTimer); rooms.delete(r.code); return; }
   if (r.host === email && left.length) r.host = left[0].id;
+  // Between rounds, a table that was already playing closes once too few players remain.
+  if (!active(r) && !r.state?.result && r.round > 0 && r.seats.length < g.min) return closeTable(r, `${name} left, so the table closed.`);
   update(r);
 }
 

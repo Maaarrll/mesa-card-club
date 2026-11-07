@@ -141,6 +141,15 @@ function act(s, seat, a) {
 
 const turn = s => (s.result ? null : s.turn);
 
+// A player left mid-hand: their hand folds now (they lose only what's already in the pot).
+function forfeit(s, seat) {
+  if (s.result || s.folded[seat]) return;
+  if (s.turn === seat) return act(s, seat, { type: 'fold' });
+  s.folded[seat] = true;
+  s.log.push(`${s.names[seat]} left and folds`);
+  if (seats(s).filter(i => !s.folded[i]).length === 1) finish(s); // everyone else is gone: last player wins the pot
+}
+
 function botAct(s, seat) {
   const toCall = s.current - s.bets[seat], h = s.hole[seat], r = Math.random();
   let str;
@@ -167,4 +176,4 @@ function view(s, seat) {
 }
 
 // stake = the stack you sit with (start() uses the same min), the most you can lose in one hand.
-module.exports = { min: 2, max: 6, minChips: bet => bet * 2, stake: (bet, chips) => Math.min(chips, bet * 50), start, act, turn, botAct, timeoutAct, view, score5, best, cmp };
+module.exports = { min: 2, max: 6, minChips: bet => bet * 2, stake: (bet, chips) => Math.min(chips, bet * 50), start, act, turn, botAct, timeoutAct, forfeit, view, score5, best, cmp };

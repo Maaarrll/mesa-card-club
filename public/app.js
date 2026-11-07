@@ -58,6 +58,7 @@ function connect() {
     R = d.room;
     deadline = R?.turnEndsIn != null ? Date.now() + R.turnEndsIn : 0;
     render();
+    if (d.notice) toast(d.notice); // e.g. "Ana left, so the table closed."
   };
   // A closed stream isn't proof the login expired (reloads and network blips close it too).
   // Ask the server: api() logs out on 401; otherwise reconnect.
@@ -514,9 +515,9 @@ const frontAt = (i, n, layout) => layout === 'tg2' && i !== R.mySeat ? posAt(Mat
 const face = s => (s.bot ? '🤖' : s.avatar || esc((s.name[0] || '?').toUpperCase()));
 const avatar = i => `<div class="avatar ${R.seats[i].avatar || R.seats[i].bot ? 'emoji' : ''}" style="--h:${(i * 137 + 20) % 360}">${face(R.seats[i])}</div>`;
 // One player's spot at the table: avatar, name plate with coins, then game-specific bits (cards, score, bet).
-function seatBox(i, n, { active = false, cls = '', extra = '', front = '', layout } = {}) {
+function seatBox(i, n, { active = false, cls = '', extra = '', front = '', layout, pos } = {}) {
   const s = R.seats[i];
-  return `<div class="tseat2 ${active ? 'active' : ''} ${i === R.mySeat ? 'me' : ''} ${cls}" id="seat${i}" style="${seatAt(i, n, layout)}">
+  return `<div class="tseat2 ${active ? 'active' : ''} ${i === R.mySeat ? 'me' : ''} ${cls}" id="seat${i}" style="${pos || seatAt(i, n, layout)}">
     ${avatar(i)}
     <div class="plate"><b>${esc(s.name)}</b><small>${s.chips != null ? coins(s.chips) : 'Bot'}</small></div>
     ${extra}
@@ -582,7 +583,7 @@ function tongits(v) {
   const my = R.mySeat, nm = i => esc(R.seats[i].name);
   const deciding = v.phase === 'fight' && !v.result ? v.fight.pending[0] : null;
   const active = i => !v.result && (deciding ?? v.turn) === i;
-  const from = i => '#seat' + i;
+  const from = i => (i === my ? '#zone' + i : '#seat' + i); // where moved cards fly from
   const myPlay = !v.result && deciding == null && v.turn === my && v.phase === 'play';
   const myDraw = !v.result && deciding == null && v.turn === my && v.phase === 'draw';
   sel = new Set([...sel].filter(c => v.hand.includes(c)));
@@ -609,17 +610,26 @@ function tongits(v) {
     const label = t === 'FIGHT' ? 'FIGHT!' : t === 'WIN' && v.result.how === 'tongits' ? 'TONGITS!' : t;
     return `<div class="stamp ${t.toLowerCase()} ${label === 'TONGITS!' ? 'tongits' : ''}">${label}</div>`;
   };
+  // Table layout like the original game: opponents sit at the sides (or across, heads-up) with a
+  // card-back badge showing how many cards they hold; every player has a DROP AREA box for their melds.
   const n = v.counts.length; // 2 or 3 players
-  const seats = v.counts.map((_, i) => seatBox(i, n, {
-    active: active(i), cls: i === my ? 'mine-seat' : '', layout: n === 2 ? 'tg2' : undefined,
-    extra: `<div class="seatinfo">${i === my || v.result ? tgScore(i === my ? v.points : v.result.points[i]) : ''}
-        ${v.exposed[i] ? '' : '<span class="tag">no meld</span>'} ${timerTag(active(i))}</div>${stampOf(i)}`,
-    front: `${i === my ? '' : `<div class="fan">${v.result
-        ? v.result.hands[i].map(c => card(c, { cls: 'xs face', k: `or${i}:${c}` })).join('')
-        : Array.from({ length: v.counts[i] }, (_, j) => card('??', { cls: 'xs', k: `ob${i}:${j}`, src: '#deck' })).join('')}</div>
-      <small class="cnt">${v.counts[i]} cards</small>`}
-      <div class="melds ${i === my ? 'mydrop' : ''}" ${i === my && myPlay ? 'data-do="dropArea" role="button" aria-label="Drop area: lay down the selected meld"' : ''}>${meldsOf(i)}</div>`,
+  const k = i => (i - my + n) % n; // 1 = next player, 2 = the one after
+  const others = n === 3 ? [(my + 2) % n, (my + 1) % n] : [(my + 1) % n]; // [left, right] or [across]
+  const seatPos = i => (n === 2 ? 'left:50%;top:7%' : k(i) === 1 ? 'left:95%;top:30%' : 'left:5%;top:30%');
+  const seats = others.map(i => seatBox(i, n, {
+    active: active(i), pos: seatPos(i),
+    extra: `<div class="handcount" title="${v.counts[i]} cards in hand">${v.counts[i]}</div>
+      <div class="seatinfo">${v.result ? tgScore(v.result.points[i]) : ''}${v.exposed[i] ? '' : '<span class="tag">no meld</span>'} ${timerTag(active(i))}</div>${stampOf(i)}`,
   })).join('');
+  // A box with many melds (or melds + a revealed hand) uses smaller cards so nothing gets cut off.
+  const busy = i => { const m = v.melds.filter(x => x.owner === i).length + (v.result && i !== my ? 1 : 0); return m >= (i === my ? 5 : 3) ? 'dense' : ''; };
+  const zone = (i, area) => `<div class="tzone ${area} ${i === my ? 'mydrop' : ''} ${active(i) ? 'turn' : ''} ${busy(i)}" id="zone${i}"
+      ${i === my && myPlay ? 'data-do="dropArea" role="button" aria-label="Your drop area: lay down the selected meld"' : ''}>
+      <span class="zlabel">${i === my ? 'YOUR DROP AREA' : 'DROP AREA'}</span>
+      ${v.result && i !== my ? `<div class="reveal" aria-label="${nm(i)}'s hand">${v.result.hands[i].map(c => card(c, { cls: 'xs face', k: `or${i}:${c}` })).join('')}</div>` : ''}
+      <div class="zmelds">${meldsOf(i)}</div>
+      ${i === my ? `<div class="zstamp">${stampOf(i)}</div>` : ''}
+    </div>`;
 
   let acts = '', hint = '';
   if (v.result) acts = '';
@@ -637,15 +647,19 @@ function tongits(v) {
       : '★ = meld (Drop) · blue = Sapaw onto the glowing meld · 🔥 = best card to Dump. Select cards to see what they can do.';
   } else acts = `<span class="muted">${nm(v.turn)}'s turn…</span>`;
 
-  const center = `<div class="row piles">
-      ${deckPile(myDraw ? 'data-do="tg" data-a="draw" role="button" tabindex="0" aria-label="Draw from stock"' : '', myDraw ? 'glow' : '')}
-      <div class="pilecount">Stock<br><b>${v.stock}</b></div>
-      <div class="pile ${H?.pick ? 'hint-pick' : ''}" id="discard" ${myDraw && v.top ? 'data-do="pickDiscard" role="button" tabindex="0" aria-label="Take the discard"' : ''}>${v.top ? card(v.top, { cls: 'sm', k: 'd:' + v.top, src: from(v.last) }) : '<div class="card sm empty"></div>'}</div>
-      <div class="pilecount">Discard</div>
-    </div>
-    <div class="log one">${esc(v.log.at(-1) || '')}</div>`;
+  const piles = `<div class="tpiles">
+      <div class="row piles">
+        <div class="col">${deckPile(myDraw ? 'data-do="tg" data-a="draw" role="button" tabindex="0" aria-label="Draw from stock"' : '', myDraw ? 'glow' : '')}<span class="pilecount"><b>${v.stock}</b></span></div>
+        <div class="col"><div class="pile ${H?.pick ? 'hint-pick' : ''}" id="discard" ${myDraw && v.top ? 'data-do="pickDiscard" role="button" tabindex="0" aria-label="Take the discard"' : ''}>${v.top ? card(v.top, { cls: 'sm', k: 'd:' + v.top, src: from(v.last) }) : '<div class="card sm empty"></div>'}</div><span class="pilecount">Discard</span></div>
+      </div>
+      <div class="log one">${esc(v.log.at(-1) || '')}</div>
+    </div>`;
+  // Top row: opponents' drop areas with the stock & discard between them; bottom row: your drop area.
+  const center = n === 3
+    ? `<div class="tgrid three">${zone(others[0], 'zl')}${piles}${zone(others[1], 'zr')}${zone(my, 'zm')}</div>`
+    : `<div class="tgrid two">${zone(others[0], 'zl')}${piles}${zone(my, 'zm')}</div>`;
 
-  return tableHtml(seats, center, 'tongits') + `
+  return tableHtml(seats, center, 'tongits ' + (n === 3 ? 'three' : 'two')) + `
     <div class="mine tgtray ${active(my) ? 'active' : ''}">
       <div class="trayhead"><div class="status"><b>Your hand</b> ${tgScore(v.points)} ${timerTag(active(my))}
         <button class="toggle ${meldSort ? 'on' : ''}" data-do="meldsort" aria-pressed="${meldSort}" title="Group your melds together">🔀<span class="long"> Sort</span></button>
