@@ -101,6 +101,9 @@ function hints(s, seat) {
   return { melds, sapaw, burn: bestDiscard(loose.length ? loose : hand), tongits: !!planOut(hand, s.melds) };
 }
 
+// A player's score: only cards that are NOT part of a meld count (melds still in the hand are free).
+const score = h => bestMelds(h).dead;
+
 function start(players, bet, round = 0) {
   const n = players.length, dealer = round % n, d = shuffle(deck());
   const hands = players.map((_, i) => sortCards(d.splice(0, i === dealer ? 13 : 12)));
@@ -118,7 +121,7 @@ function finish(s, winner, how) {
     const pay = s.bet * (how === 'tongits' ? 2 : 1) * (how === 'stock' && !s.exposed[i] ? 2 : 1);
     deltas[i] -= pay; deltas[winner] += pay;
   });
-  const n = s.names[winner], pts = handPoints(s.hands[winner]);
+  const n = s.names[winner], pts = score(s.hands[winner]);
   const text = how === 'tongits' ? `${n} TONGITS! (double pay)`
     : how === 'draw' ? `${n} wins the Draw with ${pts} points`
     : `Stock ran out: ${n} wins with ${pts} points (players with no meld are burned, pay double)`;
@@ -132,7 +135,7 @@ function finish(s, winner, how) {
 }
 
 function settleFight(s) {
-  const { caller, fighters } = s.fight, pts = s.hands.map(handPoints);
+  const { caller, fighters } = s.fight, pts = s.hands.map(score);
   const low = Math.min(...[caller, ...fighters].map(i => pts[i]));
   finish(s, fighters.find(f => pts[f] === low) ?? caller, 'draw'); // tie goes to the challenger
 }
@@ -141,7 +144,8 @@ function endByCount(s) {
   const order = s.hands.map((_, k) => (s.turn + 1 + k) % s.hands.length);
   const pool = order.filter(i => s.exposed[i]);
   const cand = pool.length ? pool : order;
-  finish(s, cand.reduce((b, i) => (handPoints(s.hands[i]) < handPoints(s.hands[b]) ? i : b)), 'stock');
+  const pts = s.hands.map(score);
+  finish(s, cand.reduce((b, i) => (pts[i] < pts[b] ? i : b)), 'stock');
 }
 
 function act(s, seat, a) {
@@ -273,9 +277,9 @@ function forfeit(s, seat) {
 
 function botAct(s, seat) {
   const hand = s.hands[seat];
-  if (s.phase === 'fight') return { type: handPoints(hand) <= 12 ? 'fight' : 'fold' };
+  if (s.phase === 'fight') return { type: score(hand) <= 12 ? 'fight' : 'fold' };
   if (s.phase === 'draw') {
-    if (s.exposed[seat] && !s.sapawed[seat] && handPoints(hand) <= 9) return { type: 'call' };
+    if (s.exposed[seat] && !s.sapawed[seat] && score(hand) <= 9) return { type: 'call' };
     const top = s.discard.at(-1);
     const m = top && bestMelds([...hand, top]).melds.find(x => x.includes(top));
     return m ? { type: 'pick', cards: m.filter(c => c !== top) } : { type: 'draw' };
@@ -306,14 +310,14 @@ function view(s, seat) {
     hand: s.hands[seat], counts: s.hands.map(h => h.length), stock: s.stock.length,
     top: s.discard.at(-1) || null, melds: s.melds, turn: s.turn, phase: s.phase, exposed: s.exposed,
     canCall: s.phase === 'draw' && s.turn === seat && s.exposed[seat] && !s.sapawed[seat],
-    points: handPoints(s.hands[seat]), fight: s.fight, log: s.log.slice(-6), last: s.last ?? s.turn,
+    points: score(s.hands[seat]), fight: s.fight, log: s.log.slice(-6), last: s.last ?? s.turn,
     suggest: bestMelds(s.hands[seat]).melds, hints: hints(s, seat),
-    result: s.result && { ...s.result, hands: s.hands, points: s.hands.map(handPoints) },
+    result: s.result && { ...s.result, hands: s.hands, points: s.hands.map(score) },
   };
 }
 
 module.exports = {
   // stake = held while the round runs; covers the worst loss (2x bet for Tongits or burned).
   min: 2, max: 3, minChips: bet => bet * 4, stake: bet => bet * 4,
-  start, act, turn, botAct, timeoutAct, forfeit, view, isMeld, bestMelds, handPoints, planOut, hints,
+  start, act, turn, botAct, timeoutAct, forfeit, view, isMeld, bestMelds, handPoints, score, planOut, hints,
 };

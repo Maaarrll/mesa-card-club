@@ -331,7 +331,7 @@ const GAME_INFO = {
   tongits: {
     icon: '🃏', players: '2-3 players', need: 4,
     note: b => `Each loser pays the winner ${b}. Tongits or burned pays double (${b * 2}).`,
-    rules: `<p>52 cards, 2 or 3 players. Dealer gets 13 cards, others 12. Card points: A=1, 2-10 face value, J/Q/K=10.</p>
+    rules: `<p>52 cards, 2 or 3 players. Dealer gets 13 cards, others 12. Card points: A=1, 2-10 face value, J/Q/K=10. Your <b>score</b> counts only cards that are not part of a meld (melds still in your hand are free).</p>
       <p><b>Your turn:</b> draw from the stock, <i>or</i> take the top discard (only if it makes a meld right away). Lay down melds (3-4 of a kind, or 3+ in a row of one suit), <b>sapaw</b> (add cards to any meld on the table), then discard one card.</p>
       <p><b>Tongits:</b> empty your hand and win double. <b>Draw:</b> at the start of your turn, if you have a meld down and nobody sapaw-ed it since your last turn, call Draw. Others with a meld may fight or fold; lowest points wins (ties go to the challenger).</p>
       <p><b>Stock runs out:</b> lowest points among players with a meld wins. Players with no meld are <b>burned</b> and pay double.</p>`,

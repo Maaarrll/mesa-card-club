@@ -130,6 +130,22 @@ assert(tongitsWins > 0, 'bots should sometimes go out (Tongits) in 2-player game
   assert.equal(tongits.view(h, 1).hints, null, 'no hints when it is not your turn');
 }
 
+// Scores count only cards that are not part of a meld.
+{
+  assert.equal(tongits.score(['KH', 'KS', 'KD', '7C', '8C', '9C', '2H', '3S']), 5, 'K-K-K and 7-8-9 are free: only 2 + 3 count');
+  assert.equal(tongits.score(['QH', 'KS', 'AD']), 21, 'no meld: everything counts (10 + 10 + 1)');
+  assert.equal(tongits.score(['4H', '4D', '4C', '4S', '5S', '6S']), 0, 'all cards in melds: score 0');
+  const s = tongits.start(bots(2), 10, 0);
+  s.hands[0] = ['KH', 'KS', 'KD', '2H']; // 33 counting everything, 2 counting only loose cards
+  s.hands[1] = ['5H', '6C'];             // 11
+  assert.equal(tongits.view(s, 0).points, 2, 'your score badge shows only unmatched cards');
+  s.turn = 0; s.phase = 'draw'; s.exposed = [true, true];
+  tongits.act(s, 0, { type: 'call' });
+  tongits.act(s, 1, { type: 'fight' });
+  assert.equal(s.result.winner, 0, 'Draw is won on unmatched points: 2 beats 11');
+  assert.deepEqual(tongits.view(s, 0).result.points, [2, 11]);
+}
+
 // Illegal moves are rejected and leave state unchanged.
 const t = tongits.start(bots(3), 10, 0);
 assert.throws(() => tongits.act(t, 1, { type: 'draw' }), /Not your turn/);
