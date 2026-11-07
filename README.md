@@ -29,7 +29,11 @@ Node host (Render, Railway, a VPS) and run `npm start`; it reads `PORT` from the
 `render.yaml` sets everything up: on render.com choose **New → Blueprint** and pick this GitHub repo.
 - The admin key for `/admin` is the `ADMIN_KEY` value under the service's **Environment** tab.
 - Free plan: the site sleeps after 15 minutes without visitors (the next visit takes about a minute to wake it),
-  and it has no disk, so **accounts and coins reset** whenever it sleeps or redeploys.
+  and it has no disk. To keep accounts, coins and logins, create a free database at https://console.upstash.com
+  (Redis → Create database), then copy its **UPSTASH_REDIS_REST_URL** and **UPSTASH_REDIS_REST_TOKEN** into the
+  Render service's **Environment** tab. Without them, accounts reset whenever the site sleeps or redeploys.
+- If the database can't be reached at startup, the server refuses to start rather than starting empty,
+  so saved accounts are never overwritten. Check the Render logs and the two values if the site won't come up.
 
 ## Files
 - `server.js`: accounts, sessions, tables, live updates (Server-Sent Events), bots and the turn timer.

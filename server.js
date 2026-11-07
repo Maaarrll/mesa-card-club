@@ -13,20 +13,64 @@ const DB = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'user
 const PUBLIC = path.join(__dirname, 'public');
 
 fs.mkdirSync(path.dirname(DB), { recursive: true });
-// shortcut: users live in one JSON file; move to a real database if you get thousands of players.
-const users = fs.existsSync(DB) ? JSON.parse(fs.readFileSync(DB, 'utf8')) : {};
-const save = () => { fs.writeFileSync(DB + '.tmp', JSON.stringify(users, null, 1)); fs.renameSync(DB + '.tmp', DB); };
 // Secret admin panel (/admin). The key comes from ADMIN_KEY, or is generated once into data/admin-key.txt.
 const KEY_FILE = path.join(path.dirname(DB), 'admin-key.txt');
 const ADMIN_LOG = path.join(path.dirname(DB), 'admin-log.jsonl');
 const ADMIN_KEY = process.env.ADMIN_KEY || (fs.existsSync(KEY_FILE) ? fs.readFileSync(KEY_FILE, 'utf8').trim()
   : (() => { const k = crypto.randomBytes(16).toString('hex'); fs.writeFileSync(KEY_FILE, k); return k; })());
 let adminFails = { n: 0, until: 0 };
-// Coins held for a round that was still running when the server stopped go back to their owner.
-for (const u of Object.values(users)) if (u.held) { u.chips += u.held; u.held = 0; }
-save();
-// shortcut: sessions are in memory, so everyone logs in again after a server restart.
+
+// ---------- saved data: accounts, logins, admin history ----------
+// Locally: data/users.json. On a host without a disk (Render free), set UPSTASH_REDIS_REST_URL and
+// UPSTASH_REDIS_REST_TOKEN and everything is also kept in a free Upstash Redis database.
+// shortcut: everything is one JSON value; fine for a few thousand players, move to real tables beyond that.
+const users = {};
 const sessions = new Map(); // token -> email
+let adminEntries = []; // admin coin changes, oldest first
+const KV_URL = process.env.UPSTASH_REDIS_REST_URL, KV_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN, KV_KEY = 'mesa:data';
+async function kv(command) {
+  const r = await fetch(KV_URL, { method: 'POST', headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(command) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(`Upstash ${r.status}: ${j.error || 'request failed'}`);
+  return j.result;
+}
+let pushTimer = null, pushing = Promise.resolve();
+function save() {
+  fs.writeFileSync(DB + '.tmp', JSON.stringify(users, null, 1));
+  fs.renameSync(DB + '.tmp', DB);
+  if (KV_URL) { clearTimeout(pushTimer); pushTimer = setTimeout(flush, 300); } // many quick changes -> one upload
+}
+function flush() {
+  clearTimeout(pushTimer);
+  pushTimer = null;
+  const data = JSON.stringify({ users, sessions: [...sessions], adminLog: adminEntries.slice(-200) });
+  pushing = pushing.then(() => kv(['SET', KV_KEY, data])).catch(e => {
+    console.error('Cloud save failed, retrying in 5s:', e.message); // keep the data in memory and try again
+    pushTimer = setTimeout(flush, 5000);
+  });
+  return pushing;
+}
+async function loadData() {
+  let saved = null;
+  if (KV_URL) {
+    // If the database can't be reached we stop here (Render restarts us) instead of starting empty
+    // and then overwriting everyone's saved accounts.
+    const raw = await kv(['GET', KV_KEY]);
+    saved = raw ? JSON.parse(raw) : null;
+    console.log(saved ? `Loaded ${Object.keys(saved.users).length} accounts from the cloud database` : 'Cloud database is empty: starting fresh');
+  }
+  if (!saved) saved = {
+    users: fs.existsSync(DB) ? JSON.parse(fs.readFileSync(DB, 'utf8')) : {},
+    adminLog: fs.existsSync(ADMIN_LOG) ? fs.readFileSync(ADMIN_LOG, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)) : [],
+  };
+  Object.assign(users, saved.users);
+  for (const [t, e] of saved.sessions || []) if (users[e]) sessions.set(t, e);
+  adminEntries = saved.adminLog || [];
+  // Coins held for a round that was still running when the server stopped go back to their owner.
+  for (const u of Object.values(users)) if (u.held) { u.chips += u.held; u.held = 0; }
+  save();
+  if (KV_URL) await flush(); // store the refunds right away
+}
 const rooms = new Map(); // code -> room
 const userRoom = new Map(); // email -> code
 const clients = new Map(); // email -> Set of open event streams
@@ -45,6 +89,7 @@ const active = r => r.state && !r.state.result;
 function newSession(email) {
   const token = crypto.randomBytes(24).toString('hex');
   sessions.set(token, email);
+  save(); // logins are saved too, so players stay logged in after the server sleeps
   return { token, user: publicUser(users[email]) };
 }
 
@@ -171,10 +216,7 @@ function checkAdmin(key) {
   }
   adminFails = { n: 0, until: 0 };
 }
-const adminLog = () => {
-  if (!fs.existsSync(ADMIN_LOG)) return [];
-  return fs.readFileSync(ADMIN_LOG, 'utf8').trim().split('\n').filter(Boolean).slice(-25).reverse().map(l => JSON.parse(l));
-};
+const adminLog = () => adminEntries.slice(-25).reverse();
 
 // ---------- API ----------
 const api = {
@@ -189,8 +231,10 @@ const api = {
       if (u.chips + n < 0) throw fail(400, `${u.name} only has ${u.chips} free coins to remove`);
       const before = total(u);
       u.chips += n;
+      const entry = { at: Date.now(), email: u.email, name: u.name, amount: n, before, after: total(u), reason: String(reason || '').slice(0, 100) };
+      adminEntries.push(entry);
+      fs.appendFileSync(ADMIN_LOG, JSON.stringify(entry) + '\n');
       save();
-      fs.appendFileSync(ADMIN_LOG, JSON.stringify({ at: Date.now(), email: u.email, name: u.name, amount: n, before, after: total(u), reason: String(reason || '').slice(0, 100) }) + '\n');
       sendTo(u.email);
       const r = rooms.get(userRoom.get(u.email));
       if (r) push(r);
@@ -226,7 +270,7 @@ const api = {
     loginFails.delete(key);
     return newSession(u.email);
   },
-  logout(_, email, token) { sessions.delete(token); return {}; },
+  logout(_, email, token) { sessions.delete(token); save(); return {}; },
   avatar({ avatar }, email) {
     if (!AVATARS.includes(avatar)) throw fail(400, 'Pick one of the avatars');
     users[email].avatar = avatar;
@@ -387,8 +431,15 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-if (require.main === module) server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Mesa Card Club on http://localhost:${PORT}`);
-  console.log(`Admin panel: http://localhost:${PORT}/admin  (key: ${process.env.ADMIN_KEY ? 'ADMIN_KEY setting' : KEY_FILE})`);
-});
+if (require.main === module) {
+  loadData().then(() => server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Mesa Card Club on http://localhost:${PORT}${KV_URL ? '  (accounts saved in Upstash)' : ''}`);
+    console.log(`Admin panel: http://localhost:${PORT}/admin  (key: ${process.env.ADMIN_KEY ? 'ADMIN_KEY setting' : KEY_FILE})`);
+  })).catch(e => { console.error('Could not load saved accounts, not starting:', e.message); process.exit(1); });
+  // Render stops the server when it sleeps or redeploys: upload any unsaved change first.
+  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, async () => {
+    if (KV_URL) { await flush(); await pushing; }
+    process.exit(0);
+  });
+}
 module.exports = { server, users, sessions };
